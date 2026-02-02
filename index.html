@@ -640,6 +640,22 @@
 				return digits;
 			}
 
+			function parseGoogleSheetInfo(inputUrl) {
+				const raw = normalizeText(inputUrl);
+				if (!raw) return null;
+				try {
+					const u = new URL(raw);
+					const m = u.pathname.match(/\/spreadsheets\/d\/([^/]+)/i);
+					if (!m) return null;
+					return {
+						sheetId: m[1],
+						gid: u.searchParams.get("gid") || "0",
+					};
+				} catch {
+					return null;
+				}
+			}
+
 			function parseCsv(text) {
 				// Minimal CSV parser that supports quotes and commas/newlines.
 				const rows = [];
@@ -696,20 +712,26 @@
 				const likelyDirect = /output=csv|format=csv|tqx=out:csv|\/macros\/s\//i.test(raw);
 				if (likelyDirect) return [raw];
 
-				try {
-					const u = new URL(raw);
-					// Support standard edit URL: https://docs.google.com/spreadsheets/d/{id}/edit?...gid=0
-					const m = u.pathname.match(/\/spreadsheets\/d\/([^/]+)/i);
-					if (!m) return [raw];
-					const sheetId = m[1];
-					const gid = u.searchParams.get("gid") || "0";
-					return [
-						`https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${encodeURIComponent(gid)}`,
-						`https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&gid=${encodeURIComponent(gid)}`,
-					];
-				} catch {
-					return [raw];
-				}
+				const info = parseGoogleSheetInfo(raw);
+				if (!info) return [raw];
+				const { sheetId, gid } = info;
+				return [
+					`https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${encodeURIComponent(gid)}`,
+					`https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&gid=${encodeURIComponent(gid)}`,
+				];
+			}
+
+			function buildGoogleSheetGvizJsonCandidates(inputUrl) {
+				const raw = normalizeText(inputUrl);
+				if (!raw) return [];
+				// Allow user to paste their own gviz json endpoint.
+				if (/gviz\/tq/i.test(raw) && /out:json|out:json;/i.test(raw)) return [raw];
+				const info = parseGoogleSheetInfo(raw);
+				if (!info) return [];
+				const { sheetId, gid } = info;
+				return [
+					`https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&gid=${encodeURIComponent(gid)}`,
+				];
 			}
 
 			async function fetchTextWithFallback(urls) {
@@ -728,6 +750,92 @@
 				throw new Error(msg || "Không tải được.");
 			}
 
+			function gvizResponseToMatrix(resp) {
+				const table = resp?.table;
+				if (!table || !Array.isArray(table.cols) || !Array.isArray(table.rows)) {
+					throw new Error("Dữ liệu gviz không hợp lệ.");
+				}
+				const headers = table.cols.map((c) => (c?.label ?? c?.id ?? "").toString());
+				const rows = table.rows.map((r) => {
+					const cells = Array.isArray(r?.c) ? r.c : [];
+					return headers.map((_, i) => {
+						const cell = cells[i];
+						const v = cell && Object.prototype.hasOwnProperty.call(cell, "v") ? cell.v : "";
+						return v === null || v === undefined ? "" : v;
+					});
+				});
+				return [headers, ...rows];
+			}
+
+			function loadGvizResponseViaScript(url) {
+				return new Promise((resolve, reject) => {
+					const previousGoogle = window.google;
+					const googleObj = previousGoogle ?? {};
+					const prevViz = googleObj.visualization;
+					const prevQuery = prevViz?.Query;
+					const prevSetResponse = prevQuery?.setResponse;
+
+					window.google = googleObj;
+					window.google.visualization = window.google.visualization || {};
+					window.google.visualization.Query = window.google.visualization.Query || {};
+
+					let settled = false;
+					const script = document.createElement("script");
+					script.async = true;
+					script.src = url;
+
+					const cleanup = () => {
+						try {
+							script.remove();
+						} catch {
+							// ignore
+						}
+						// Restore setResponse if it existed.
+						if (prevSetResponse) {
+							window.google.visualization.Query.setResponse = prevSetResponse;
+						} else {
+							try {
+								delete window.google.visualization.Query.setResponse;
+							} catch {
+								// ignore
+							}
+						}
+						// If we created google from scratch and it was previously undefined, keep it (harmless)
+						// to avoid breaking any other script that might have checked for its existence.
+						// But we do restore the previous nested objects when possible.
+						if (previousGoogle && prevViz) {
+							window.google.visualization = prevViz;
+							if (prevQuery) window.google.visualization.Query = prevQuery;
+						}
+					};
+
+					const timeout = setTimeout(() => {
+						if (settled) return;
+						settled = true;
+						cleanup();
+						reject(new Error("Timeout khi tải gviz."));
+					}, 12000);
+
+					window.google.visualization.Query.setResponse = (resp) => {
+						if (settled) return;
+						settled = true;
+						clearTimeout(timeout);
+						cleanup();
+						resolve(resp);
+					};
+
+					script.onerror = () => {
+						if (settled) return;
+						settled = true;
+						clearTimeout(timeout);
+						cleanup();
+						reject(new Error("Không tải được script gviz."));
+					};
+
+					document.head.appendChild(script);
+				});
+			}
+
 			async function fetchCatalogFromSheet() {
 				const input = normalizeText(catalogSettings.sheetCsvUrl);
 				if (!input) {
@@ -737,15 +845,23 @@
 				if (candidates.length === 0) {
 					throw new Error("Link không hợp lệ.");
 				}
-				let text;
+				let matrix;
 				try {
-					text = await fetchTextWithFallback(candidates);
+					const text = await fetchTextWithFallback(candidates);
+					matrix = parseCsv(text);
 				} catch (err) {
-					throw new Error(
-						`Không tải được catalog. Nếu bạn dùng link Google Sheet, hãy Publish ra web rồi dùng CSV. (Chi tiết: ${err?.message ?? String(err)})`
-					);
+					// iOS Safari often blocks fetch from file:// due to CORS. Try gviz via script tag.
+					try {
+						const gvizCandidates = buildGoogleSheetGvizJsonCandidates(input);
+						if (gvizCandidates.length === 0) throw new Error("Không có gviz endpoint.");
+						const resp = await loadGvizResponseViaScript(gvizCandidates[0]);
+						matrix = gvizResponseToMatrix(resp);
+					} catch (err2) {
+						throw new Error(
+							`Không tải được catalog trên thiết bị này. Nếu bạn mở file trực tiếp trên iPhone, hãy host trang qua http(s) (GitHub Pages/Netlify) hoặc Publish sheet ra web. (fetch: ${err?.message ?? String(err)}; gviz: ${err2?.message ?? String(err2)})`
+						);
+					}
 				}
-				const matrix = parseCsv(text);
 				if (matrix.length < 2) throw new Error("CSV trống hoặc thiếu dữ liệu.");
 				const headers = matrix[0].map((h) => normalizeText(h).toLowerCase());
 
