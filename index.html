@@ -216,10 +216,44 @@
 				background: rgba(255, 255, 255, 0.03);
 			}
 
+			thead th.col-qty {
+				text-align: center;
+			}
+
 			tbody td {
 				padding: 12px 14px;
 				border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 				vertical-align: middle;
+			}
+
+			tbody td.col-qty {
+				text-align: center;
+			}
+
+			tbody .muted {
+				font-size: 13px;
+			}
+
+			tbody .qty button {
+				height: 32px;
+				min-width: 38px;
+				font-size: 12px;
+				padding: 0 8px;
+			}
+
+			tbody .qty .qty-display {
+				min-width: 46px;
+				padding: 6px 10px;
+				font-size: 14px;
+			}
+
+			tbody .trash {
+				width: 34px;
+				height: 34px;
+			}
+
+			tbody .trash.btn {
+				height: 34px;
 			}
 
 			tbody tr:hover {
@@ -227,37 +261,43 @@
 			}
 
 			.col-name {
-				width: 44%;
-			}
-
-			.col-shelf {
-				width: 26%;
+				width: 35%;
 			}
 
 			.col-qty {
-				width: 30%;
+				width: 40%;
+			}
+
+			.col-shelf {
+				width: 25%;
 			}
 
 			.qty {
 				display: flex;
-				gap: 8px;
+				gap: 6px;
 				align-items: center;
+				justify-content: center;
 			}
 
 			.qty button {
-				width: 40px;
-				padding: 0;
+				min-width: 44px;
+				padding: 0 8px;
 				display: inline-grid;
 				place-items: center;
-				font-size: 18px;
+				font-size: 14px;
+				font-weight: 650;
 				line-height: 1;
 			}
 
-			.qty input[type="number"] {
-				width: 120px;
+			.qty .qty-display {
+				min-width: 56px;
+				padding: 8px 12px;
 				text-align: center;
-				font-size: 15px;
-				font-weight: 650;
+				font-size: 16px;
+				font-weight: 750;
+				border-radius: 10px;
+				background: rgba(124, 58, 237, 0.15);
+				border: 1px solid rgba(124, 58, 237, 0.35);
 			}
 
 			.muted {
@@ -356,16 +396,23 @@
 				}
 
 				.col-name {
-					width: 48%;
-				}
-				.col-shelf {
-					width: 22%;
+					width: 35%;
 				}
 				.col-qty {
-					width: 30%;
+					width: 40%;
 				}
-				.qty input[type="number"] {
-					width: 92px;
+				.col-shelf {
+					width: 25%;
+				}
+				.qty button {
+					min-width: 34px;
+					padding: 0 6px;
+					font-size: 12px;
+				}
+				.qty .qty-display {
+					min-width: 42px;
+					padding: 6px 8px;
+					font-size: 13px;
 				}
 				thead th,
 				tbody td {
@@ -507,8 +554,8 @@
 						<thead>
 							<tr>
 								<th class="col-name">Tên hàng</th>
-								<th class="col-shelf">Kệ</th>
 								<th class="col-qty">Số lượng</th>
+								<th class="col-shelf">Kệ</th>
 								<th style="width: 1%"></th>
 							</tr>
 						</thead>
@@ -517,9 +564,6 @@
 				</div>
 
 				<div class="footer">
-					<div>
-						Mẹo: bấm vào ô số rồi dùng <span class="kbd">↑</span>/<span class="kbd">↓</span> để +1/-1.
-					</div>
 					<div id="catalogStatus" class="notice" style="display: none"></div>
 					<details class="settings">
 						<summary>Cài đặt Google Sheet</summary>
@@ -575,23 +619,17 @@
 				<td class="col-name">
 					<div class="muted" data-field="name"></div>
 				</td>
-				<td class="col-shelf">
-					<div class="muted" data-field="shelf"></div>
-				</td>
 				<td class="col-qty">
 					<div class="qty">
-						<button class="btn" type="button" data-action="dec" aria-label="Giảm 1">-</button>
-						<input
-							type="number"
-							inputmode="numeric"
-							pattern="[0-9]*"
-							placeholder="-"
-							step="1"
-							data-field="qty"
-							aria-label="Số lượng cần fill"
-						/>
-						<button class="btn" type="button" data-action="inc" aria-label="Tăng 1">+</button>
+						<button class="btn" type="button" data-action="dec5" aria-label="Giảm 5">-5</button>
+						<button class="btn" type="button" data-action="dec" aria-label="Giảm 1">-1</button>
+						<div class="qty-display" data-field="qty" aria-label="Số lượng">0</div>
+						<button class="btn" type="button" data-action="inc" aria-label="Tăng 1">+1</button>
+						<button class="btn" type="button" data-action="inc5" aria-label="Tăng 5">+5</button>
 					</div>
+				</td>
+				<td class="col-shelf">
+					<div class="muted" data-field="shelf"></div>
 				</td>
 				<td>
 					<div class="row-actions">
@@ -971,8 +1009,6 @@
 				render();
 				els.barcodeInput.value = "";
 				hideCatalogStatus();
-				const firstRowQty = els.tbody.querySelector('tr:first-child [data-field="qty"]');
-				if (firstRowQty) firstRowQty.focus();
 			}
 
 			function openCamera() {
@@ -1061,8 +1097,8 @@
 					frag.querySelector('[data-field="name"]').textContent = it.name || "(Chưa đặt tên)";
 					frag.querySelector('[data-field="shelf"]').textContent = it.shelf || "-";
 
-					const qtyInput = frag.querySelector('[data-field="qty"]');
-					qtyInput.value = Number.isFinite(it.qty) ? String(it.qty) : "";
+					const qtyDisplay = frag.querySelector('[data-field="qty"]');
+					qtyDisplay.textContent = Number.isFinite(it.qty) ? String(it.qty) : "0";
 
 					els.tbody.appendChild(frag);
 				}
@@ -1082,10 +1118,6 @@
 				els.shelfInput.value = "";
 				save();
 				render();
-
-				// Focus qty box of first row
-				const firstRowQty = els.tbody.querySelector('tr:first-child [data-field="qty"]');
-				if (firstRowQty) firstRowQty.focus();
 			}
 
 			function setQty(id, qty) {
@@ -1103,9 +1135,6 @@
 				items[idx].qty = Math.max(0, cur + delta);
 				save();
 				render();
-				const row = els.tbody.querySelector(`tr[data-id="${CSS.escape(id)}"]`);
-				const qtyInput = row?.querySelector('[data-field="qty"]');
-				if (qtyInput) qtyInput.focus();
 			}
 
 			function removeItem(id) {
@@ -1207,18 +1236,12 @@
 				const id = tr.dataset.id;
 				const action = btn.dataset.action;
 				if (action === "inc") bumpQty(id, +1);
+				if (action === "inc5") bumpQty(id, +5);
 				if (action === "dec") bumpQty(id, -1);
+				if (action === "dec5") bumpQty(id, -5);
 				if (action === "remove") {
 					removeItem(id);
 				}
-			});
-
-			els.tbody.addEventListener("input", (e) => {
-				const input = e.target.closest('input[data-field="qty"]');
-				if (!input) return;
-				const tr = e.target.closest("tr");
-				if (!tr) return;
-				setQty(tr.dataset.id, input.value);
 			});
 
 			// Init
