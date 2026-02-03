@@ -4,6 +4,7 @@
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Fill Product</title>
+		<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 		<style>
 			:root {
 				--bg: #0b1220;
@@ -372,6 +373,88 @@
 					padding-right: 10px;
 				}
 			}
+
+			/* Camera modal */
+			.camera-overlay {
+				position: fixed;
+				top: 0;
+				left: 0;
+				right: 0;
+				bottom: 0;
+				background: rgba(0, 0, 0, 0.92);
+				z-index: 9999;
+				display: none;
+				align-items: center;
+				justify-content: center;
+				padding: 20px;
+			}
+
+			.camera-overlay.active {
+				display: flex;
+			}
+
+			.camera-modal {
+				background: var(--panel);
+				border: 1px solid var(--border);
+				border-radius: var(--radius);
+				padding: 20px;
+				max-width: 600px;
+				width: 100%;
+				position: relative;
+			}
+
+			.camera-header {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				margin-bottom: 16px;
+			}
+
+			.camera-header h3 {
+				margin: 0;
+				font-size: 18px;
+				font-weight: 700;
+			}
+
+			.camera-close {
+				width: 36px;
+				height: 36px;
+				display: grid;
+				place-items: center;
+				border-radius: 8px;
+				border: 1px solid var(--border);
+				background: rgba(255, 255, 255, 0.06);
+				color: var(--text);
+				cursor: pointer;
+				font-size: 20px;
+			}
+
+			.camera-close:hover {
+				background: rgba(255, 255, 255, 0.1);
+			}
+
+			#reader {
+				width: 100%;
+				border-radius: 12px;
+				overflow: hidden;
+				background: #000;
+			}
+
+			.camera-info {
+				margin-top: 12px;
+				padding: 10px;
+				border-radius: 8px;
+				background: rgba(0, 0, 0, 0.3);
+				color: var(--muted);
+				font-size: 13px;
+				text-align: center;
+			}
+
+			.btn.scan-icon {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+			}
 		</style>
 	</head>
 	<body>
@@ -399,14 +482,17 @@
 						</div>
 						<div class="field">
 							<label for="barcodeInput">Barcode (7 số cuối)</label>
-							<input id="barcodeInput" type="text" inputmode="numeric" placeholder="VD: 1234567" autocomplete="off" />
+							<input id="barcodeInput" type="text" inputmode="numeric" autocomplete="off" />
+						</div>
+						<div class="field" style="align-self: end">
+							<button id="scanBtn" class="btn scan-icon" type="button">📷 Quét</button>
 						</div>
 						<div class="field" style="align-self: end">
 							<button id="lookupBtn" class="btn" type="button">Tra</button>
 						</div>
 						<div class="field">
 							<label for="searchInput">Tìm</label>
-							<input id="searchInput" type="search" placeholder="Tên hàng / kệ" autocomplete="off" />
+							<input id="searchInput" type="search" autocomplete="off" />
 						</div>
 					</div>
 					<div class="toolbar-right">
@@ -472,6 +558,18 @@
 			</div>
 		</div>
 
+		<!-- Camera Scanner Modal -->
+		<div id="cameraOverlay" class="camera-overlay">
+			<div class="camera-modal">
+				<div class="camera-header">
+					<h3>Quét mã vạch</h3>
+					<button id="closeCameraBtn" class="camera-close" type="button">✕</button>
+				</div>
+				<div id="reader"></div>
+				<div class="camera-info">Hướng camera vào mã vạch để quét tự động</div>
+			</div>
+		</div>
+
 		<template id="rowTemplate">
 			<tr>
 				<td class="col-name">
@@ -513,6 +611,7 @@
 				shelfInput: document.getElementById("shelfInput"),
 				addBtn: document.getElementById("addBtn"),
 				barcodeInput: document.getElementById("barcodeInput"),
+				scanBtn: document.getElementById("scanBtn"),
 				lookupBtn: document.getElementById("lookupBtn"),
 				searchInput: document.getElementById("searchInput"),
 				copyBtn: document.getElementById("copyBtn"),
@@ -524,6 +623,8 @@
 				refreshCatalogBtn: document.getElementById("refreshCatalogBtn"),
 				importCsvBtn: document.getElementById("importCsvBtn"),
 				csvFileInput: document.getElementById("csvFileInput"),
+				cameraOverlay: document.getElementById("cameraOverlay"),
+				closeCameraBtn: document.getElementById("closeCameraBtn"),
 				tbody: document.getElementById("tbody"),
 				rowTemplate: document.getElementById("rowTemplate"),
 				statItems: document.getElementById("statItems"),
@@ -532,6 +633,8 @@
 
 			/** @type {Item[]} */
 			let items = [];
+
+			let html5QrcodeScanner = null;
 
 			const CATALOG_SETTINGS_KEY = "fill-counter:catalog-settings:v1";
 			const CATALOG_CACHE_KEY = "fill-counter:catalog-cache:v1";
@@ -872,6 +975,62 @@
 				if (firstRowQty) firstRowQty.focus();
 			}
 
+			function openCamera() {
+				els.cameraOverlay.classList.add('active');
+				if (typeof Html5Qrcode === 'undefined') {
+					alert('Thư viện quét mã vạch chưa tải. Vui lòng thử lại.');
+					return;
+				}
+				
+				html5QrcodeScanner = new Html5Qrcode("reader");
+				
+				const config = {
+					fps: 10,
+					qrbox: { width: 250, height: 150 },
+					formatsToSupport: [
+						Html5QrcodeSupportedFormats.EAN_13,
+						Html5QrcodeSupportedFormats.EAN_8,
+						Html5QrcodeSupportedFormats.CODE_128,
+						Html5QrcodeSupportedFormats.CODE_39,
+						Html5QrcodeSupportedFormats.UPC_A,
+						Html5QrcodeSupportedFormats.UPC_E
+					]
+				};
+
+				html5QrcodeScanner.start(
+					{ facingMode: "environment" },
+					config,
+					(decodedText) => {
+						// Lấy 7 số cuối
+						const barcode7 = normalizeBarcode7(decodedText);
+						if (barcode7.length === 7) {
+							els.barcodeInput.value = barcode7;
+							closeCamera();
+							// Tự động tra luôn
+							addByBarcode();
+						}
+					},
+					(errorMessage) => {
+						// Bỏ qua lỗi quét thông thường
+					}
+				).catch(err => {
+					alert('Không thể mở camera: ' + err);
+					closeCamera();
+				});
+			}
+
+			function closeCamera() {
+				if (html5QrcodeScanner) {
+					html5QrcodeScanner.stop().then(() => {
+						html5QrcodeScanner.clear();
+						html5QrcodeScanner = null;
+					}).catch(err => {
+						console.error('Lỗi đóng camera:', err);
+					});
+				}
+				els.cameraOverlay.classList.remove('active');
+			}
+
 			function computeTotal() {
 				return items.reduce((sum, it) => sum + (Number.isFinite(it.qty) ? it.qty : 0), 0);
 			}
@@ -998,6 +1157,8 @@
 
 			// Events
 			els.addBtn.addEventListener("click", addItem);
+			els.scanBtn.addEventListener("click", openCamera);
+			els.closeCameraBtn.addEventListener("click", closeCamera);
 			els.lookupBtn.addEventListener("click", addByBarcode);
 			els.searchInput.addEventListener("input", render);
 			els.copyBtn.addEventListener("click", copyReport);
